@@ -1,201 +1,200 @@
 # nisev25_docker
 
-Pipeline ของงาน strip: ข้อมูลตาราง (CSV) → รูป strip → ชุดข้อมูล k-fold → เทรน YOLOv8 → ทำนาย/ประเมินผล
+Pipeline for the strip project: tabular data (CSV) -> strip images -> k-fold datasets -> YOLOv8 training -> prediction / evaluation.
 
-- **algo 1** = strip สีเทา, **algo 2** = strip สี
-- **mode** `nopca` = ใช้ feature เดิม, `pca` = ใช้ PC1/PC2
-- ชื่อกลุ่มที่เทรน = `<dataset>_<mode>_algo<a>_k<k>` เช่น `iris_nopca_algo1_k8` (แต่ละกลุ่มมี 5 fold)
-- Dataset ที่รองรับ 12 ชุด: iris, wine, breast_cancer, automobile, ionosphere, amphibians_{green_frogs, brown_frogs, common_toad, fire_bellied_toad, tree_frog, common_newt, great_crested_newt}
+- **algo 1** = grey strip, **algo 2** = colour strip
+- **mode** `nopca` = original features, `pca` = PC1/PC2
+- A trained group is named `<dataset>_<mode>_algo<a>_k<k>`, e.g. `iris_nopca_algo1_k8` (each group has 5 folds)
+- 12 supported datasets: iris, wine, breast_cancer, automobile, ionosphere, amphibians_{green_frogs, brown_frogs, common_toad, fire_bellied_toad, tree_frog, common_newt, great_crested_newt}
 
-คำสั่งทั้งหมดรันในโฟลเดอร์ `ultralytics/` (Windows ใช้ `python`, Ubuntu ใช้ `python3` หรือ `python` ใน venv)
+All commands are run inside the `ultralytics/` folder (`python` on Windows; `python3`, or `python` inside the venv, on Ubuntu).
 
-## โครงสร้าง
+## Layout
 
-| ไฟล์ | หน้าที่ |
+| File | Purpose |
 |---|---|
-| `config.json` / `config.py` | ค่ากลาง: ชื่อ volume/image, รายชื่อ dataset (`run_datasets`), ค่า default ของ gen |
-| `init_data.py` | คัดลอก CSV ต้นฉบับเข้า `data/<dataset>/` |
-| `gen_folds.py` | `split` แบ่ง fold เป็น CSV, `gen` สร้างรูป strip + pack + label (รันใน Docker) |
-| `run_gen.py` | ตัวห่อ `docker run` สำหรับ split/gen/build |
-| `transfer.py` | export/import ระหว่าง Docker volume กับโฟลเดอร์ `out/` และเครื่องอื่น |
-| `clear.py` | ล้าง `out/`, `data/`, volume |
-| `train_v2.py` + `train_config.json` | เทรนทุกกลุ่ม/ทุก fold ตาม config, บันทึก manifest, ข้ามที่เสร็จแล้ว |
-| `train_v2_pm2.py` + `ecosystem.config.js` | รันเทรนยาวผ่าน PM2 พร้อมจำสถานะ session |
-| `predict_v2.py` | ทำนายจาก CSV / รูป / test ของ fold |
-| `predict_watch_v2.py` | ทำนายแบบค้างรอ (โหลดโมเดลครั้งเดียว) |
-| `evaluate_v2.py` | วัดผลบน test ทุก fold: accuracy, balanced acc, macro-F1, confusion matrix |
+| `config.json` / `config.py` | Central config: volume/image names, dataset list (`run_datasets`), gen defaults |
+| `init_data.py` | Copies the source CSVs into `data/<dataset>/` |
+| `gen_folds.py` | `split` writes per-fold CSVs, `gen` builds strip images + packs + labels (runs in Docker) |
+| `run_gen.py` | `docker run` wrapper for split / gen / build |
+| `transfer.py` | Export / import between the Docker volume, the `out/` folder and other machines |
+| `clear.py` | Clears `out/`, `data/` and the volume |
+| `train_v2.py` + `train_config.json` | Trains every group / fold from the config, writes manifests, skips finished folds |
+| `train_v2_pm2.py` + `ecosystem.config.js` | Long training runs under PM2 with session tracking |
+| `predict_v2.py` | Predict from a CSV, images, or the test set of a fold |
+| `predict_watch_v2.py` | Long-running predictor (model loaded once) |
+| `evaluate_v2.py` | Test-set evaluation over all folds: accuracy, balanced accuracy, macro-F1, confusion matrix |
 
-ข้อมูลที่สร้างได้ใหม่ (`data/`, `out/`, `runs_strip/`, `*.pt` ฯลฯ) ไม่ถูก commit ดู `.gitignore` ยกเว้น `out/split_backup.tar.gz` ที่เก็บไว้เพื่อทำซ้ำ split เดิม
+Anything that can be regenerated (`data/`, `out/`, `runs_strip/`, `*.pt`, ...) is not committed, see `.gitignore`. The exception is `out/split_backup.tar.gz`, kept so the exact same split can be reproduced.
 
-## ข้อกำหนด
+## Requirements
 
-- Docker (สำหรับ gen), Python 3
-- Ubuntu ที่เทรน: PM2 (`npm i -g pm2`), venv ที่มี `ultralytics`
-- ตอนประเมิน/ทำนาย ให้ใช้ Pillow เวอร์ชันเดียวกับ Docker image (`pip install "pillow==12.2.0"`) เพื่อให้รูปตรงกับที่ใช้เทรน
+- Docker (for gen), Python 3
+- Training machine (Ubuntu): PM2 (`npm i -g pm2`) and a venv with `ultralytics`
+- For evaluation / prediction use the same Pillow version as the Docker image (`pip install "pillow==12.2.0"`) so the images match the ones used for training
 
-## Scenario 1: เริ่มใหม่ทั้งหมด (เครื่องต้นทาง)
+## Scenario 1: start from scratch (source machine)
 
 ```bash
-python run_gen.py all              # init data + build image (ถ้ายังไม่มี) + split + gen
-python run_gen.py gen --preview    # gen โดยมีรูป preview (กรอบ + row_id) ด้วย
+python run_gen.py all              # init data + build image (if missing) + split + gen
+python run_gen.py gen --preview    # gen with preview images (boxes + row_id drawn on)
 ```
 
-- ผลอยู่ใน Docker volume `stripout` ไม่ได้อยู่ในโฟลเดอร์ `out/`
-- gen เขียน `index/<part>.csv` ทุกครั้ง บอกว่าแต่ละกล่องในรูปมาจาก `row_id` ไหน ส่วน `preview/` เขียนเมื่อใส่ `--preview`
-- `all` รัน `split` ก่อน ถ้า volume มี split อยู่แล้วจะหยุด (ไม่ทับ) ให้ใช้ `run_gen.py gen` แทน อย่าใส่ `--overwrite` ถ้าไม่ต้องการ split ใหม่
+- Results live in the Docker volume `stripout`, not in the `out/` folder.
+- Every gen writes `index/<part>.csv`, which tells which `row_id` each box in an image comes from. `preview/` is written only with `--preview`.
+- `all` runs `split` first. If the volume already has a split it stops (nothing is overwritten); use `run_gen.py gen` instead. Do not add `--overwrite` unless you really want a new split.
 
-## Scenario 1.2: ย้ายไปเครื่องอื่น (เช่น Ubuntu)
+## Scenario 1.2: move to another machine (e.g. Ubuntu)
 
-เครื่องต้นทาง:
+Source machine:
 
 ```bash
 python transfer.py export          # -> out/split_backup.tar.gz (~0.5 MB)
 ```
 
-copy ไฟล์นี้ (และโปรเจ็คทั้งโฟลเดอร์ รวม `config.json`) ไปวางที่ `ultralytics/out/` ของเครื่องปลายทาง
+Copy this file (and the whole project folder, including `config.json`) to `ultralytics/out/` on the target machine.
 
-เครื่องปลายทาง:
+Target machine:
 
 ```bash
 cd ~/yolo8_strip_25/ultralytics
-python3 clear.py --all --yes                      # ล้างของเดิม (ทำก่อนวาง tar)
-# วาง out/split_backup.tar.gz แล้วตรวจ
+python3 clear.py --all --yes                      # clear old data (do this before placing the tar)
+# put out/split_backup.tar.gz in place, then check it
 ls -l out/split_backup.tar.gz
 python3 transfer.py import out/split_backup.tar.gz
 python3 run_gen.py build
-python3 run_gen.py gen                            # สร้างรูป algo 1,2 x nopca,pca x k ตาม config.json
+python3 run_gen.py gen                            # algo 1,2 x nopca,pca x k as set in config.json
 ```
 
-`gen` จาก split เดียวกัน + seed เดียวกัน + Pillow เวอร์ชันเดียวกัน ได้รูปเหมือนเดิมทุกไบต์
+`gen` from the same split + same seed + same Pillow version gives byte-identical images.
 
-## Scenario 2: เทรน (Ubuntu)
+## Scenario 2: training (Ubuntu)
 
-ติดตั้งครั้งเดียว:
+One-time setup:
 
 ```bash
-python3 -m venv ~/venv-yolo        # ถ้าฟ้อง ensurepip: sudo apt install -y python3-venv python3-pip
+python3 -m venv ~/venv-yolo        # if it complains about ensurepip: sudo apt install -y python3-venv python3-pip
 source ~/venv-yolo/bin/activate
 pip install --upgrade pip
 pip install ultralytics
 ```
 
-ดึงชุดเทรนออกจาก Docker มาที่ `out/` (`--move` = ลบใน volume หลังตรวจว่าคัดลอกครบ):
+Move the training sets out of Docker into `out/` (`--move` deletes them from the volume after the copy is verified):
 
 ```bash
 python transfer.py export --what sets --algos 1,2 --k_list 8 --move
 ```
 
-เทรนแบบปกติ (ค่าตั้งอยู่ใน `train_config.json`, option ใน command line ทับค่าในไฟล์):
+Normal training (settings are in `train_config.json`; command-line options override the file):
 
 ```bash
 python train_v2.py --datasets iris,wine --modes nopca --algos 1,2 --k_list 8 --folds 0,1
 python train_v2.py --weights yolov8m.pt --epochs 1000 --batch 32 --workers 1 --device 0 --seed 7 --patience 50
-python train_v2.py --extra fliplr=0.0 mosaic=0     # ส่งค่าให้ YOLO ตรงๆ (เช่น ปิด augmentation)
-python train_v2.py --only "iris_*"                 # เฉพาะกลุ่มที่ชื่อตรง
-python train_v2.py --status                        # ตารางสถานะ (mAP, เวลา start/stop/interval)
-python train_v2.py --redo                          # เทรนใหม่แม้เสร็จแล้ว
-python train_v2.py --clear                         # ลบผลเทรน + manifest ของกลุ่มที่เลือก
+python train_v2.py --extra fliplr=0.0 mosaic=0     # pass values straight to YOLO (e.g. turn augmentation off)
+python train_v2.py --only "iris_*"                 # only groups whose name matches
+python train_v2.py --status                        # status table (mAP, start / stop / interval)
+python train_v2.py --redo                          # train again even if finished
+python train_v2.py --clear                         # delete results + manifest of the selected groups
 ```
 
-- fold ที่ `done` และค่าตั้งเหมือนเดิมจะถูกข้าม, fold ที่ค้าง/ล้มเหลวจะเทรนใหม่ตั้งแต่ epoch 1
-- ถ้าแก้ค่าเทรนแล้ว fold ที่เสร็จแล้วเป็น STALE ต้องใช้ `--redo`
-- `--device`: บนเครื่องที่ใช้อยู่ 0 = RTX 3090 (V100 ใช้ไม่ได้กับ torch ที่ลงไว้)
+- A fold that is `done` with unchanged settings is skipped; a running / failed / interrupted fold is trained again from epoch 1.
+- If you change the training settings, finished folds become STALE and need `--redo`.
+- `--device`: on the current machine 0 = RTX 3090 (the V100 does not work with the installed torch).
 
-ผลลัพธ์ต่อกลุ่ม `runs_strip/<group>/`:
+Output per group, in `runs_strip/<group>/`:
 
 ```
-train_manifest.json      สถานะทุก fold, เวลา, best_epoch, mAP, path best.pt, split_id
-train_config.used.json   config ที่ใช้จริง
+train_manifest.json      status of every fold, times, best_epoch, mAP, best.pt path, split_id
+train_config.used.json   the config that was actually used
 fold_0/ ... fold_4/
-   epochs.csv            เวลาต่อ epoch
+   epochs.csv            seconds per epoch
    train/weights/best.pt, last.pt
    train/results.csv, results.png, confusion_matrix.png ...
 ```
 
-### เทรนยาวผ่าน PM2
+### Long runs under PM2
 
 ```bash
 cd ~/yolo8_strip_25/ultralytics
 mkdir -p logs
 source ~/venv-yolo/bin/activate
-pm2 delete strip-train                  # ถ้ารันอยู่
-python train_v2.py --clear              # (ถ้าต้องการเริ่มใหม่หมด)
-python train_v2_pm2.py --session-clear  # ล้าง session เก่า (ไม่แตะผลเทรน)
+pm2 delete strip-train                  # if it is running
+python train_v2.py --clear              # (only if you want to start over)
+python train_v2_pm2.py --session-clear  # forget the old session (training results are untouched)
 pm2 start ecosystem.config.js --only strip-train
-pm2 logs strip-train                    # ดูสด (Ctrl+C ออกได้ เทรนไม่หยุด)
-pm2 save && pm2 startup                 # เปิดเองหลังรีบูต (รันคำสั่ง sudo ที่พิมพ์ออกมา)
-python train_v2_pm2.py --session-status # สถานะ session + ตาราง fold
+pm2 logs strip-train                    # live log (Ctrl+C only leaves the view, training keeps running)
+pm2 save && pm2 startup                 # start on boot (run the sudo command it prints)
+python train_v2_pm2.py --session-status # session + per-fold table
 ```
 
-อื่นๆ: `--session-follow` (ดู log), `--session-force` (รันซ้ำแม้ session จบแล้ว), `--session-name NAME` (แยกหลาย session สำหรับรันขนาน โดยต้องเลือกกลุ่มคนละชุดด้วย `--only`)
+Also: `--session-follow` (tail the log), `--session-force` (run again even if the session is done), `--session-name NAME` (separate sessions for parallel runs; the runs must select different groups via `--only`).
 
-อย่าใช้ `pm2 delete all` เพราะจะลบแอปอื่นที่อยู่ใน PM2 เดียวกัน
+Do not use `pm2 delete all`: it also removes the other apps in the same PM2.
 
-## Scenario 3: วัดผลบน test (Ubuntu)
+## Scenario 3: test evaluation (Ubuntu)
 
-ดึง `test.csv` ของ split มาก่อน (ครั้งเดียว) ตรวจด้วย `ls out/wine/split/pca/fold_0`:
+Fetch the split `test.csv` files first (once). Check with `ls out/wine/split/pca/fold_0`:
 
 ```bash
 python transfer.py export --what folder --path "*/split"
 ```
 
 ```bash
-python predict_v2.py --group iris_nopca_algo1_k8 --fold 0 --test     # fold เดียว
-python evaluate_v2.py --group iris_nopca_algo1_k8                     # ทุก fold ของกลุ่ม
-python evaluate_v2.py                                                 # ทุกกลุ่มที่เทรนแล้ว
+python predict_v2.py --group iris_nopca_algo1_k8 --fold 0 --test     # one fold
+python evaluate_v2.py --group iris_nopca_algo1_k8                     # all folds of a group
+python evaluate_v2.py                                                 # every trained group
 python evaluate_v2.py --only "iris_*" --folds 0,1,2
 ```
 
-ผลอยู่ที่ `predictions/eval_<group>.json` (มี confusion matrix รวมทุก fold) และ `predictions/eval_summary.csv`
+Results: `predictions/eval_<group>.json` (includes the confusion matrix summed over the folds) and `predictions/eval_summary.csv`.
 
-- ค่า mAP ในตารางสถานะเทรนวัดบน validation ที่ใช้เลือก best.pt จึงสูงเกินจริง ผลจริงดูจาก evaluate (test)
-- ใช้ balanced accuracy / macro-F1 คู่กับ accuracy เมื่อคลาสไม่สมดุล (เช่น amphibians)
-- คลาสที่ตอบ = คลาสของกล่องที่ confidence สูงสุด (`--conf` ค่าเริ่มต้น 0.001 ไม่มีเกณฑ์ตัดสิน)
+- The mAP in the training status table is measured on the validation set that also picks best.pt, so it is optimistic. The real result is the evaluate (test) output.
+- Read balanced accuracy / macro-F1 next to accuracy when classes are imbalanced (e.g. amphibians).
+- The predicted class is the class of the most confident box. `--conf` defaults to 0.001, so there is no decision threshold.
 
-## Scenario 4: ใช้งานจริง (Ubuntu)
+## Scenario 4: real use (Ubuntu)
 
-โหมด `pca` ใช้ทำนายจาก CSV ดิบไม่ได้ (ไม่ได้เก็บพารามิเตอร์ PCA) ต้องส่งค่า PC1, PC2
+Mode `pca` cannot predict from raw CSV columns (the PCA parameters are not stored); pass the PC1, PC2 values instead.
 
-### 4.1 ส่งแล้วจบ
+### 4.1 Send once and finish
 
 ```bash
-# 1. test_input.csv -> test_input.jpg (ไม่ใช้โมเดล)
+# 1. test_input.csv -> test_input.jpg (no model)
 python predict_v2.py --group iris_nopca_algo1_k8 --fold 0 --input test_input.csv --no-predict --save-images imgs
-# 2. ทำนายจากรูป
+# 2. predict from the image
 python predict_v2.py --group iris_nopca_algo1_k8 --fold 0 --images imgs/test_input.jpg
 ```
 
-ทำนายจาก CSV ตรงๆ (ขั้น 1+2 ในคำสั่งเดียว): `--input test_input.csv` โดยไม่ใส่ `--no-predict`
+To predict straight from the CSV (steps 1 + 2 in one command) use `--input test_input.csv` without `--no-predict`.
 
-### 4.2 โมเดลค้างรอ แล้วค่อยส่งข้อมูล
+### 4.2 Keep the model running, send data later
 
 ```bash
 python predict_watch_v2.py --group iris_nopca_algo1_k8 --fold 0
 ```
 
-ใส่ไฟล์ CSV (คอลัมน์ feature เหมือน `--input` ของ `predict_v2.py`) หรือรูป `.jpg`/`.png` ลงที่ `watch/inbox/` ผลอยู่ที่ `watch/outbox/<ชื่อไฟล์>.result.json` (คลาสสูงสุด, confidence, คะแนนทุกคลาส, เวลาที่ใช้) ถ้าผิดพลาดได้ `<ชื่อ>.error.json` รันผ่าน PM2 ได้ด้วยแอป `strip-predict` ใน `ecosystem.config.js`
+Drop a CSV (feature columns like `--input` of `predict_v2.py`) or a ready-made `.jpg` / `.png` into `watch/inbox/`. The result is written to `watch/outbox/<file name>.result.json` (top class, confidence, score of every class, time taken); on failure you get `<name>.error.json`. It can also run under PM2 as the `strip-predict` app in `ecosystem.config.js`.
 
-## Preview และ index (ย้อนรอยรูป pack กลับเป็นแถวใน CSV)
+## index and preview (tracing a packed image back to CSV rows)
 
 ```
 repacking_k_<k>/<fold>/index/{training,validation,test}.csv   image, line, row_id, class, cx, cy, w, h, kind
-repacking_k_<k>/<fold>/preview/<part>/                        รูปที่วางกรอบ + row_id (เฉพาะ gen --preview)
+repacking_k_<k>/<fold>/preview/<part>/                        images with boxes + row_id drawn on (gen --preview only)
 ```
 
-ทั้งสองอยู่นอกโฟลเดอร์ `training/validation/test` เพื่อไม่ให้ YOLO อ่านเป็นข้อมูลเทรน ดึงออกจาก volume เฉพาะส่วนนี้:
+Both sit outside the `training/validation/test` folders so YOLO never reads them as training data. To copy only these out of the volume:
 
 ```bash
-python transfer.py export --what extras --parts preview          # หรือ index, หรือ index,preview
+python transfer.py export --what extras --parts preview          # or index, or index,preview
 ```
 
-## ลำดับคำสั่ง transfer.py (`--what`)
+## transfer.py `--what` values
 
-| ค่า | ได้อะไร |
+| Value | What you get |
 |---|---|
-| `split` (ค่าเริ่มต้น) | `out/split_backup.tar.gz` (CSV แบ่ง fold + manifest) |
-| `all` | ทั้ง volume -> `out/strip_all.tar.gz` |
-| `folder --path ...` | โฟลเดอร์ที่ระบุ (รองรับ `*`) เป็นโฟลเดอร์จริงใน `out/` |
-| `sets` | `repacking_k_*` ตาม `--datasets/--modes/--algos/--k_list` พร้อม manifest ของ algo (`--move` ลบใน volume หลังตรวจ) |
-| `extras` | เฉพาะ `index/` และ `preview/` |
-| `data` | โฟลเดอร์ `data/` -> `out/data_backup.tar.gz` |
-
+| `split` (default) | `out/split_backup.tar.gz` (fold CSVs + manifest) |
+| `all` | the whole volume -> `out/strip_all.tar.gz` |
+| `folder --path ...` | the given folder(s) (`*` allowed) as real folders under `out/` |
+| `sets` | `repacking_k_*` for `--datasets/--modes/--algos/--k_list` plus the algo manifest (`--move` deletes them from the volume after verifying) |
+| `extras` | only `index/` and `preview/` |
+| `data` | the `data/` folder -> `out/data_backup.tar.gz` |
