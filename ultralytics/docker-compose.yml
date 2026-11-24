@@ -1,0 +1,18 @@
+# /out is a named volume: writing ~200k small files through a Windows bind mount was ~30x slower (iris: 297 s vs 10 s).
+#
+# docker compose run --rm strip split --datasets iris --dataset_root /data --out_dir /out --seed 42
+# docker compose run --rm strip gen --datasets iris --out_dir /out --modes nopca,pca --algos 1,2 --k_list 0,2,4
+#
+# export everything as one archive into ./out:
+# docker compose run --rm -v ./out:/export --entrypoint tar strip czf /export/strip_all.tar.gz -C /out .
+services:
+  strip:
+    build: .
+    image: strip-gen
+    volumes:
+      - ./data:/data
+      - stripout:/out
+
+volumes:
+  stripout:
+    name: stripout

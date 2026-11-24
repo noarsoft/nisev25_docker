@@ -1,0 +1,33 @@
+{
+  "data_root": "out",
+  "project_root": "runs_strip",
+  "select": {
+    "datasets": ["iris",
+    "wine",
+    "breast_cancer",
+    "automobile",
+    "ionosphere",
+    "amphibians_green_frogs",
+    "amphibians_brown_frogs",
+    "amphibians_common_toad",
+    "amphibians_fire_bellied_toad",
+    "amphibians_tree_frog",
+    "amphibians_common_newt",
+    "amphibians_great_crested_newt"],
+    "modes": ["nopca", "pca"],
+    "algos": [1, 2],
+    "k_list": [8],
+    "folds": [0, 1, 2, 3, 4]
+  },
+  "train": {
+    "weights": "yolov8s.pt",
+    "epochs": 1000,
+    "imgsz": 640,
+    "batch": 32,
+    "workers": 1,
+    "device": "0",
+    "seed": 42,
+    "patience": 100,
+    "extra": {}
+  }
+}

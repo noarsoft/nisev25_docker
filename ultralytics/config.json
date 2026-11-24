@@ -1,0 +1,46 @@
+{
+  "volume": "stripout",
+  "image": "strip-gen",
+  "data_dir": "data",
+  "export_dir": "out",
+  "run_datasets": [
+    "iris",
+    "wine",
+    "breast_cancer",
+    "automobile",
+    "ionosphere",
+    "amphibians_green_frogs",
+    "amphibians_brown_frogs",
+    "amphibians_common_toad",
+    "amphibians_fire_bellied_toad",
+    "amphibians_tree_frog",
+    "amphibians_common_newt",
+    "amphibians_great_crested_newt"
+  ],
+  "defaults": {
+    "modes": "nopca,pca",
+    "algos": "1,2",
+    "k_list": "0,2,4,8",
+    "split_seed": 42,
+    "gen_seed": 0,
+    "cell": "auto"
+  },
+  "datasets": {
+    "iris": "iris.csv",
+    "wine": "wine.csv",
+    "breast_cancer": "breast-cancer-wisconsin1.csv",
+    "automobile": "automobile.csv",
+    "ionosphere": "ionosphere.csv",
+    "student": "Student_performance_data.csv",
+    "adult": "adult.csv",
+    "electric": "electricity.csv",
+    "hcc": "hcc.csv",
+    "amphibians_green_frogs": "amphibians.csv",
+    "amphibians_brown_frogs": "amphibians.csv",
+    "amphibians_common_toad": "amphibians.csv",
+    "amphibians_fire_bellied_toad": "amphibians.csv",
+    "amphibians_tree_frog": "amphibians.csv",
+    "amphibians_common_newt": "amphibians.csv",
+    "amphibians_great_crested_newt": "amphibians.csv"
+  }
+}

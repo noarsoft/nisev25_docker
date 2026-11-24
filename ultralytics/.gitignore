@@ -1,0 +1,30 @@
+# model weights (pretrained + trained)
+*.pt
+*.pth
+*.onnx
+*.engine
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv*/
+
+# generated data / exports (recreate with run_gen.py / transfer.py)
+data/
+out/*
+!out/split_backup.tar.gz
+*.tar.gz
+!out/split_backup.tar.gz
+
+# training / prediction output and runtime state
+runs/
+runs_strip/
+sessions/
+logs/
+predictions/
+watch/
+
+# editor
+.idea/
+.vscode/

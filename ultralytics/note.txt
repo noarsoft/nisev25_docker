@@ -1,0 +1,118 @@
+Docker, pm2 need to be install
+
+--scenario 1: เริ่มใหม่ทั้งหมด (Windows หรือ Ubuntu เครื่องต้นทาง)--
+python run_gen.py all                      # init data + build (ถ้ายังไม่มี image) + split + gen
+python run_gen.py gen --preview            # gen มี preview pack
+
+
+--scenario 1.2: ย้ายไปเครื่องอื่น (เช่น Ubuntu)--
+
+# --เครื่อง export--
+python transfer.py export                  # -> out/split_backup.tar.gz (เล็ก ~0.5 MB)
+# copy ไฟล์นี้ + โฟลเดอร์โปรเจ็ค (รวม config.json) ไปวางที่ ultralytics/out/ บนเครื่องปลายทาง
+
+python transfer.py export --what extras --parts preview    # export เฉพาะ preview
+
+
+# --เครื่องปลายทาง (Ubuntu ใช้ python3)--
+# ถ้ายังไม่ได้ติดลอง --scenario 1: เริ่มใหม่ทั้งหมด (Windows หรือ Ubuntu เครื่องต้นทาง)--
+cd ~/yolo8_strip_25/ultralytics
+python run_gen.py all                      # init data + build (ถ้ายังไม่มี image) + split + gen
+
+python3 clear.py --all --yes                  # ลบ out/, data/, volume (tar ยังไม่ได้วาง จึงไม่เสียหาย)
+# --- ตอนนี้ค่อย copy split_backup.tar.gz มาวางที่ out/ (scp/SFTP) ---
+ls -l out/split_backup.tar.gz
+python3 transfer.py import out/split_backup.tar.gz
+python3 run_gen.py build
+# เอา data มา
+python3 run_gen.py gen  #gen สร้างรูป training / validation / test พร้อม dataset.yaml และ manifest.json ของ algo 1,2 × nopca,pca × k ตาม config ทั้งหมดอยู่ใน volume ไม่ได้อยู่ในโฟลเดอร์บน Ubuntu
+
+
+
+
+
+
+
+--scenario 2: เทรน yolov8s (Ubuntu)--
+# ติดตั้งครั้งเดียว
+    ถ้า clear venv ก่อน
+        deactivate # ถ้า venv เปิดอยู่ (เห็น (venv-yolo) หน้าพรอมต์)
+    rm -rf ~/venv-yolo
+
+python3 -m venv ~/venv-yolo        # ฟ้อง ensurepip -> sudo apt install -y python3-venv python3-pip แล้วรันซ้ำ
+source ~/venv-yolo/bin/activate
+pip install --upgrade pip
+pip install ultralytics
+
+
+# transfer data มานอก docker
+python transfer.py export --what sets --algos 1,2 --k_list 8 --move        #เป็นการเอามาข้างนอก docker เพื่อ train และ ลบใน docker ทิ้ง
+
+
+
+# train แบบปกติ
+python train_v2.py --datasets iris,wine --modes nopca --algos 1,2 --k_list 8 --folds 0,1
+python train_v2.py --weights yolov8m.pt --epochs 1000 --batch 32 --workers 1 --device 1 --seed 7 --patience 50
+python train_v2.py --extra fliplr=0.0 mosaic=0       # ส่งค่าอื่นให้ YOLO ตรงๆ (ปิด augmentation)
+python train_v2.py --data-root out --project-root runs_strip
+python train_v2.py --redo                  # เทรนใหม่แม้เสร็จแล้ว
+
+
+train_manifest.json        สถานะทุก fold, เวลา, epoch ที่รันจริง, best_epoch, mAP, path best.pt, GPU, เวอร์ชัน, split_id
+train_config.used.json     config ที่ใช้จริง (ไฟล์ + ค่าที่ทับจาก command line)
+fold_0/ ... fold_4/
+   epochs.csv              เวลาต่อ epoch
+   train/weights/best.pt , last.pt
+   train/results.csv, results.png, confusion_matrix.png ฯลฯ
+
+
+
+# train ผ่าน pm2
+cd ~/yolo8_strip_25/ultralytics
+mkdir -p logs                                  # ผมไม่แน่ใจว่า PM2 สร้างโฟลเดอร์ให้เอง สร้างไว้ก่อนปลอดภัยกว่า
+source ~/venv-yolo/bin/activate
+pm2 delete strip-train      # ถ้ารันอยู่
+python train_v2.py --clear  #clear train ทั้งหมด
+python train_v2_pm2.py --session-clear  
+pm2 start ecosystem.config.js --only strip-train
+pm2 logs strip-train                           # ดูสด
+pm2 save && pm2 startup                        # ให้เปิดเองหลังรีบูต (รันคำสั่ง sudo ที่มันพิมพ์ออกมา)
+python train_v2_pm2.py --session-status        # สถานะ session + ตาราง fold
+
+
+
+
+
+--scenario 3: test evaluation (Ubuntu)--
+
+รัน out/<ds>/split/<mode>/fold_<f>/test.csv ดึง test dataset ตรวจด้วย ls out/wine/split/pca/fold_0 
+python transfer.py export --what folder --path "*/split"
+
+# วัดผลบน test ของแต่ละ fold ที่เทรนเสร็จแล้ว (แสดง accuracy + confusion matrix)
+python predict_v2.py --group iris_nopca_algo1_k8 --fold 0 --test
+python predict_v2.py --group iris_nopca_algo1_k8 --fold 1 --test
+# หรือวนทุก fold:  for f in 0 1 2 3 4; do python predict_v2.py --group iris_nopca_algo1_k8 --fold $f --test; done
+
+#loop evaluation
+python evaluate_v2.py --group iris_nopca_algo1_k8      # ทุก fold ที่เทรนเสร็จของกลุ่มนี้
+python evaluate_v2.py                                  # ทุกกลุ่มที่มี train_manifest.json
+python evaluate_v2.py --only "iris_*" --folds 0,1,2    # เลือกบางส่วน
+
+
+
+--scenario 4: real-use case (Ubuntu)--
+
+# scenario 4.1 ส่งแล้วจบ
+# 1. test_input.csv -> test_input.jpg  (ไม่ใช้โมเดล)
+python predict_v2.py --group iris_nopca_algo1_k8 --fold 0 --input test_input.csv --no-predict --save-images imgs
+
+# 2. ทำนายจากรูป
+python predict_v2.py --group iris_nopca_algo1_k8 --fold 0 --images imgs/test_input.jpg
+
+
+
+# scenario 4.2 long run model แล้วค่อทำนาย
+python predict_watch_v2.py --group iris_nopca_algo1_k8 --fold 0      # เริ่มค้างรอ (โหลดโมเดลครั้งเดียว)
+
+ใส่ไฟล์ CSV (คอลัมน์ feature เหมือน predict_v2.py --input) หรือรูป .jpg/.png สำเร็จรูปลงที่ watch/inbox/
+ผลอยู่ที่ watch/outbox/<ชื่อไฟล์>.result.json (คลาสสูงสุด, confidence, คะแนนทุกคลาส, เวลาที่ใช้) ถ้าผิดพลาดได้ <ชื่อ>.error.json
